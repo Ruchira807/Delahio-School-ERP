@@ -364,7 +364,7 @@ async function waiveFine(student) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden border-y border-slate-200 bg-white">
+      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto border-y border-slate-200 bg-white">
         <table className="w-full min-w-[900px] table-auto border-collapse text-left text-xs">
           <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
             <tr>
