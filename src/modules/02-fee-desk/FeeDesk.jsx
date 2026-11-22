@@ -66,41 +66,32 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
   }, [rows, query, classFilter, statusFilter]);
 
   const active = rows.find((student) => student.id === activeId) ?? null;
-  const activePending = active ? duesFor(active).pending : 0;
+const activePending = active ? duesFor(active).pending : 0;
 
+const detailPaymentTotal =
+  Number(form.cash || 0) + Number(form.upi || 0);
+
+const collectedAfterReceipt = active
+  ? Number(active.paidAmount) + detailPaymentTotal
+  : 0;
   const pendingBook = rows.reduce(
   (total, student) => total + Math.max(duesFor(student).pending, 0),
   0
   );
   const defaulters = rows.filter((student) => duesFor(student).pending > 0).length;
 
-  const columns = useMemo(() => {
-    const base = [
-      { key: 'select', label: '' },
-      { key: 'student', label: 'Student' },
-      { key: 'roll', label: 'Roll no' },
-      { key: 'class', label: 'Class' },
-      { key: 'parent', label: 'Parent' },
-      { key: 'phone', label: 'Phone' },
-      { key: 'address', label: 'Address' },
-      { key: 'tuition', label: 'Tuition' },
-      { key: 'scholarship', label: 'Scholarship %' },
-      { key: 'fine', label: 'Fine' },
-      { key: 'paid', label: 'Paid' },
-      { key: 'pending', label: 'Pending' },
-      { key: 'progress', label: 'Collected' },
-      { key: 'payAmount', label: 'Pay amount' },
-      { key: 'discount', label: 'Discount' },
-      { key: 'waive', label: 'Waive fine' },
-      { key: 'actions', label: 'Actions' },
-    ];
-
-    return base.filter((column) => {
-  if (column.key === 'waive') return can(role, 'waiveFine');
-  if (column.key === 'discount') return can(role, 'applyDiscount');
-  return true;
-});
-  }, [role]);
+  const columns = useMemo(
+  () => [
+    { key: 'select', label: '' },
+    { key: 'student', label: 'Student' },
+    { key: 'class', label: 'Class' },
+    { key: 'parent', label: 'Parent' },
+    { key: 'pending', label: 'Pending / Credit' },
+    { key: 'payAmount', label: 'Quick payment' },
+    { key: 'actions', label: 'Actions' },
+  ],
+  []
+);
 
   function draftFor(id) {
     return drafts[id] ?? EMPTY_DRAFT;
@@ -262,9 +253,21 @@ async function waiveFine(student) {
 
   function submitRowPayment(student) {
   const draft = draftFor(student.id);
+  const amount = Number(draft.pay || 0);
+  const pending = duesFor(student).pending;
+
+  if (amount <= 0) {
+    onToast('Enter a payment amount greater than zero.', 'error');
+    return;
+  }
+
+  if (amount > pending) {
+    onToast('Payment cannot exceed the pending balance.', 'error');
+    return;
+  }
 
   return collect(student, {
-    cash: Number(draft.pay || 0),
+    cash: amount,
     upi: 0,
     discount: can(role, 'applyDiscount')
       ? Number(draft.discount || 0)
@@ -362,7 +365,7 @@ async function waiveFine(student) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden border-y border-slate-200 bg-white">
-        <table className="w-[2680px] table-fixed border-collapse text-left text-xs">
+        <table className="w-full min-w-[900px] table-auto border-collapse text-left text-xs">
           <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
             <tr>
               {columns.map((column) => (
@@ -391,157 +394,154 @@ async function waiveFine(student) {
             </tr>
           </thead>
           <tbody>
-            {visibleRows.map((student) => {
-              const rowDues = duesFor(student);
-              const draft = draftFor(student.id);
-              const isSelected = selected.has(student.id);
+  {visibleRows.map((student) => {
+    const rowDues = duesFor(student);
+    const draft = draftFor(student.id);
+    const isSelected = selected.has(student.id);
 
-              return (
-                <tr
-                  key={student.id}
-                  className={`border-b border-slate-100 align-top ${
-                    isSelected ? 'bg-brand-50/60' : 'hover:bg-slate-50'
-                  }`}
-                >
-                  <td className="px-2 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${student.name}`}
-                      checked={isSelected}
-                      onChange={() => toggleRow(student.id)}
-                      className="h-3.5 w-3.5 rounded border-slate-300"
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <p className="font-semibold leading-tight text-slate-800">{student.name}</p>
-                    <p className="text-[10px] text-slate-400">{student.id}</p>
-                  </td>
-                  <td className="px-2 py-2 text-slate-600">{student.rollNo}</td>
-                  <td className="px-2 py-2 text-slate-600">
-                    {student.className}
-                    {student.section}
-                  </td>
-                  <td className="px-2 py-2 text-slate-600">{student.parentName}</td>
-                  <td className="px-2 py-2 text-slate-600">{student.phone}</td>
-                  <td className="px-2 py-2 text-[10px] leading-snug text-slate-500">{student.address}</td>
-                  <td className="px-2 py-2 text-right text-slate-700">{formatINR(student.tuition)}</td>
-                  <td className="px-2 py-2 text-right text-slate-700">{student.scholarshipPct}%</td>
-                  <td className="px-2 py-2 text-right text-slate-700">{formatINR(student.lateFine)}</td>
-                  <td className="px-2 py-2 text-right text-slate-700">{formatINR(student.paidAmount)}</td>
-                  <td
-                    className={`px-2 py-2 text-right font-semibold ${
-                     rowDues.pending > 0
-                       ? 'text-rose-600'
-                       : rowDues.pending < 0
-                         ? 'text-emerald-700'
-                         : 'text-slate-500'
-                    }`}
-                  >
-                    {rowDues.pending < 0
-                      ? `Credit ${formatINR(Math.abs(rowDues.pending))}`
-                      : rowDues.pending === 0
-                        ? 'Paid in full'
-                        : formatINR(rowDues.pending)}
-                  </td>
-                  <td className="px-2 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-16 rounded-full bg-slate-200">
-                        <div
-                          className={`h-1.5 rounded-full ${rowDues.collectedPct >= 100 ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                          style={{ width: `${rowDues.collectedPct}%` }}
-                        />
-                      </div>
-                      <span className="text-[10px] text-slate-500">{rowDues.collectedPct}%</span>
-                    </div>
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      type="number"
-                      min="0"
-                      value={draft.pay}
-                      onChange={(event) => updateDraft(student.id, { pay: event.target.value })}
-                      disabled={rowDues.pending <= 0}
-                      placeholder={rowDues.pending <= 0 ? 'No due' : '0'}
-                      className="erp-input w-24 py-1 text-xs"
-                    />
-                  </td>
-                  {can(role, 'applyDiscount') && (
-  <td className="px-2 py-2">
-    <input
-      type="number"
-      min="0"
-      value={draft.discount}
-      onChange={(event) =>
-        updateDraft(student.id, { discount: event.target.value })
-      }
-      placeholder="0"
-      className="erp-input w-20 py-1 text-xs"
-    />
-  </td>
-)}
-                  {can(role, 'waiveFine') && (
-  <td className="px-2 py-2">
-    <button
-      type="button"
-      disabled={busyId === student.id || student.lateFine <= 0}
-      onClick={() => waiveFine(student)}
-      className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      Waive fine
-    </button>
-  </td>
-)}
-                  <td className="px-2 py-2">
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        title="Collect payment"
-                        disabled={busyId === student.id || rowDues.pending <= 0}
-                        onClick={() => submitRowPayment(student)}
-                        className="rounded-md bg-emerald-600 p-1.5 text-white hover:bg-emerald-700 disabled:bg-slate-300"
-                      >
-                        <IndianRupee className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Reprint receipt"
-                        onClick={() => onToast(`Last receipt queued to counter printer for ${student.name}`, 'info')}
-                        className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
-                      >
-                        <Printer className="h-3.5 w-3.5" />
-                      </button>
-                      {can(role, 'bulkRemind') && (
-                        <button
-                          type="button"
-                          title="Send reminder"
-                          onClick={() => remind(student)}
-                          className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
-                        >
-                          <Bell className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        title="Open student ledger"
-                        onClick={() => openStudent(student)}
-                        className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
-                      >
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+    return (
+      <tr
+        key={student.id}
+        className={`border-b border-slate-100 ${
+          isSelected ? 'bg-brand-50/60' : 'hover:bg-slate-50'
+        }`}
+      >
+        {/* Select student */}
+        <td className="px-3 py-3">
+          <input
+            type="checkbox"
+            aria-label={`Select ${student.name}`}
+            checked={isSelected}
+            onChange={() => toggleRow(student.id)}
+            className="h-3.5 w-3.5 rounded border-slate-300"
+          />
+        </td>
 
-            {visibleRows.length === 0 && (
-              <tr>
-                <td colSpan={columns.length} className="px-3 py-10 text-center text-sm text-slate-400">
-                  No fee rows match the current filters.
-                </td>
-              </tr>
+        {/* Student details */}
+        <td className="px-3 py-3">
+          <p className="font-semibold text-slate-800">
+            {student.name}
+          </p>
+          <p className="text-[10px] text-slate-400">
+            {student.id} · Roll {student.rollNo}
+          </p>
+        </td>
+
+        {/* Class */}
+        <td className="px-3 py-3 text-slate-600">
+          {student.className}
+          {student.section}
+        </td>
+
+        {/* Parent */}
+        <td className="px-3 py-3">
+          <p className="text-slate-700">{student.parentName}</p>
+          <p className="text-[10px] text-slate-400">
+            {student.phone}
+          </p>
+        </td>
+
+        {/* Pending / credit */}
+        <td
+          className={`px-3 py-3 font-semibold ${
+            rowDues.pending > 0
+              ? 'text-rose-600'
+              : rowDues.pending < 0
+                ? 'text-emerald-700'
+                : 'text-slate-500'
+          }`}
+        >
+          {rowDues.pending < 0
+            ? `Credit ${formatINR(Math.abs(rowDues.pending))}`
+            : rowDues.pending === 0
+              ? 'Paid in full'
+              : formatINR(rowDues.pending)}
+        </td>
+
+        {/* Quick payment */}
+        <td className="px-3 py-3">
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              value={draft.pay}
+              onChange={(event) =>
+                updateDraft(student.id, { pay: event.target.value })
+              }
+              disabled={rowDues.pending <= 0}
+              placeholder={rowDues.pending <= 0 ? 'No due' : 'Amount'}
+              className="erp-input w-24 py-1 text-xs"
+            />
+
+            <button
+              type="button"
+              title="Collect payment"
+              disabled={
+                busyId === student.id ||
+                rowDues.pending <= 0 ||
+                Number(draft.pay || 0) <= 0
+              }
+              onClick={() => submitRowPayment(student)}
+              className="rounded-md bg-emerald-600 p-1.5 text-white hover:bg-emerald-700 disabled:bg-slate-300"
+            >
+              <IndianRupee className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </td>
+
+        {/* Actions */}
+        <td className="px-3 py-3">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title="Reprint receipt"
+              onClick={() =>
+                onToast(
+                  `Last receipt queued to counter printer for ${student.name}`,
+                  'info'
+                )
+              }
+              className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
+            >
+              <Printer className="h-3.5 w-3.5" />
+            </button>
+
+            {can(role, 'bulkRemind') && (
+              <button
+                type="button"
+                title="Send reminder"
+                onClick={() => remind(student)}
+                className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
+              >
+                <Bell className="h-3.5 w-3.5" />
+              </button>
             )}
-          </tbody>
+
+            <button
+              type="button"
+              title="Open student details and payment history"
+              onClick={() => openStudent(student)}
+              className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  })}
+
+  {visibleRows.length === 0 && (
+    <tr>
+      <td
+        colSpan={columns.length}
+        className="px-3 py-10 text-center text-sm text-slate-400"
+      >
+        No fee rows match the current filters.
+      </td>
+    </tr>
+  )}
+</tbody>
         </table>
       </div>
 
@@ -551,7 +551,7 @@ async function waiveFine(student) {
 
       {active && (
         <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
-          <aside className="flex h-full w-[520px] flex-col bg-white shadow-2xl">
+          <aside className="flex h-full w-full max-w-[520px] flex-col bg-white shadow-2xl">
             <div className="shrink-0 border-b border-slate-200 px-4 py-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -574,7 +574,7 @@ async function waiveFine(student) {
               </div>
             </div>
 
-            <div className="flex-1 px-4 py-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
               <p className="rounded-md bg-slate-50 px-2 py-1.5 text-[11px] leading-snug text-slate-600">{active.address}</p>
 
               <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
@@ -702,10 +702,10 @@ async function waiveFine(student) {
                     />
                   </div>
                   <div className="col-span-2 flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5 text-[11px]">
-                    <span className="text-slate-500">Balance after this receipt</span>
-                    <span className="font-semibold text-slate-800">
-                      {`\u20B9${active.paidAmount + form.cash + form.upi}`}
-                    </span>
+                    <span className="text-slate-500">Collected after this receipt</span>
+<span className="font-semibold text-slate-800">
+  {formatINR(collectedAfterReceipt)}
+</span>
                   </div>
                 </div>
               </div>
