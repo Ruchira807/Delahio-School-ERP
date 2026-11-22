@@ -320,11 +320,14 @@ if (!hasPermission(role, 'bulkRemind')) {
 
 api.post('/audit', (req, res) => {
   const body = req.body ?? {};
+  const role = body.role ?? 'SYSTEM';
+
   const entry = appendAudit(
     typeof body.action === 'string' ? body.action : 'NOTE',
     typeof body.detail === 'string' ? body.detail.slice(0, 200) : '',
     role,
   );
+
   res.json({ success: true, entry });
 });
 
