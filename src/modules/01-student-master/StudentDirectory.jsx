@@ -37,12 +37,13 @@ export default function StudentDirectory({ students, role }) {
         (acc, student) => {
           const dues = calculateStudentDues(student);
           return {
-            pending: acc.pending + dues.pending,
+            pending: acc.pending + Math.max(dues.pending, 0),
+            credits: acc.credits + Math.max(-dues.pending, 0),
             blocked: acc.blocked + (student.examBlocked ? 1 : 0),
             scholarships: acc.scholarships + (student.scholarshipPct > 0 ? 1 : 0),
           };
         },
-        { pending: 0, blocked: 0, scholarships: 0 },
+        { pending: 0, credits: 0, blocked: 0, scholarships: 0 },
       ),
     [students],
   );
@@ -90,10 +91,18 @@ export default function StudentDirectory({ students, role }) {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-3 gap-3">
+        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Outstanding (all classes)</p>
             <p className="text-lg font-semibold text-slate-800">{formatINR(totals.pending)}</p>
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+            Credit balances
+            </p>
+            <p className="text-lg font-semibold text-emerald-800">
+              {formatINR(totals.credits)}
+            </p>
           </div>
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Exam blocked defaulters</p>
@@ -156,8 +165,20 @@ export default function StudentDirectory({ students, role }) {
                   </td>
                   <td className="px-3 py-2 text-right text-slate-700">{formatINR(student.tuition)}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{formatINR(student.paidAmount)}</td>
-                  <td className={`px-3 py-2 text-right font-semibold ${dues.pending > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    {formatINR(dues.pending)}
+                  <td
+                      className={`px-3 py-2 text-right font-semibold ${
+                      dues.pending > 0
+                      ? 'text-rose-600'
+                      : dues.pending < 0
+                      ? 'text-emerald-600'
+                      : 'text-slate-500'
+                    }`}
+                    >
+                      {dues.pending < 0
+                      ? `Credit ${formatINR(Math.abs(dues.pending))}`
+                      : dues.pending === 0
+                      ? 'Paid in full'
+                      : formatINR(dues.pending)}
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">

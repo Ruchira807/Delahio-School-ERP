@@ -63,3 +63,24 @@ export function collectionProgress(student) {
     Math.max(0, Math.round(((payable - pending) / payable) * 100))
   );
 }
+
+
+export function summariseLedger(ledger = []) {
+  return ledger.reduce(
+    (summary, entry) => ({
+      total: round2(summary.total + toNumber(entry.total)),
+      count: summary.count + 1,
+      cash: round2(summary.cash + toNumber(entry.cash)),
+      upi: round2(summary.upi + toNumber(entry.upi)),
+      discount: round2(summary.discount + toNumber(entry.discount)),
+    }),
+    {
+      total: 0,
+      count: 0,
+      cash: 0,
+      upi: 0,
+      discount: 0,
+    }
+  );
+}
+

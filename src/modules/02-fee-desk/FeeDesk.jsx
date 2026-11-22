@@ -67,8 +67,12 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
   }, [rows, query, classFilter, statusFilter]);
 
   const active = rows.find((student) => student.id === activeId) ?? null;
+  const activePending = active ? duesFor(active).pending : 0;
 
-  const pendingBook = rows.reduce((total, student) => total + duesFor(student).pending, 0);
+  const pendingBook = rows.reduce(
+  (total, student) => total + Math.max(duesFor(student).pending, 0),
+  0
+  );
   const defaulters = rows.filter((student) => duesFor(student).pending > 0).length;
 
   const columns = useMemo(() => {
@@ -140,7 +144,12 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
   }
 
   async function collect(student, payload) {
-    setBusyId(student.id);
+  if (duesFor(student).pending <= 0) {
+    onToast('No payment is due for this student. Check the credit balance.', 'error');
+    return;
+  }
+
+  setBusyId(student.id);
     try {
       const receipt = await postPayment({
         studentId: student.id,
@@ -375,7 +384,21 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                   <td className="px-2 py-2 text-right text-slate-700">{student.scholarshipPct}%</td>
                   <td className="px-2 py-2 text-right text-slate-700">{formatINR(student.lateFine)}</td>
                   <td className="px-2 py-2 text-right text-slate-700">{formatINR(student.paidAmount)}</td>
-                  <td className="px-2 py-2 text-right font-semibold text-rose-600">{formatINR(rowDues.pending)}</td>
+                  <td
+                    className={`px-2 py-2 text-right font-semibold ${
+                     rowDues.pending > 0
+                       ? 'text-rose-600'
+                       : rowDues.pending < 0
+                         ? 'text-emerald-700'
+                         : 'text-slate-500'
+                    }`}
+                  >
+                    {rowDues.pending < 0
+                      ? `Credit ${formatINR(Math.abs(rowDues.pending))}`
+                      : rowDues.pending === 0
+                        ? 'Paid in full'
+                        : formatINR(rowDues.pending)}
+                  </td>
                   <td className="px-2 py-2">
                     <div className="flex items-center gap-2">
                       <div className="h-1.5 w-16 rounded-full bg-slate-200">
@@ -393,7 +416,8 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       min="0"
                       value={draft.pay}
                       onChange={(event) => updateDraft(student.id, { pay: event.target.value })}
-                      placeholder="0"
+                      disabled={rowDues.pending <= 0}
+                      placeholder={rowDues.pending <= 0 ? 'No due' : '0'}
                       className="erp-input w-24 py-1 text-xs"
                     />
                   </td>
@@ -423,7 +447,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       <button
                         type="button"
                         title="Collect payment"
-                        disabled={busyId === student.id}
+                        disabled={busyId === student.id || rowDues.pending <= 0}
                         onClick={() => submitRowPayment(student)}
                         className="rounded-md bg-emerald-600 p-1.5 text-white hover:bg-emerald-700 disabled:bg-slate-300"
                       >
@@ -521,10 +545,46 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                   <p className="text-slate-500">Paid to date</p>
                   <p className="font-semibold text-slate-800">{formatINR(active.paidAmount)}</p>
                 </div>
-                <div className="col-span-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5">
-                  <p className="text-rose-600">Pending balance</p>
-                  <p className="text-sm font-semibold text-rose-700">{formatINR(duesFor(active).pending)}</p>
-                </div>
+                <div
+  className={`col-span-2 rounded-md border px-2 py-1.5 ${
+    activePending < 0
+      ? 'border-emerald-200 bg-emerald-50'
+      : activePending === 0
+        ? 'border-slate-200 bg-slate-50'
+        : 'border-rose-200 bg-rose-50'
+  }`}
+>
+  <p
+    className={
+      activePending < 0
+        ? 'text-emerald-700'
+        : activePending === 0
+          ? 'text-slate-600'
+          : 'text-rose-600'
+    }
+  >
+    {activePending < 0
+      ? 'Credit balance'
+      : activePending === 0
+        ? 'Payment status'
+        : 'Pending balance'}
+  </p>
+  <p
+    className={`text-sm font-semibold ${
+      activePending < 0
+        ? 'text-emerald-800'
+        : activePending === 0
+          ? 'text-slate-700'
+          : 'text-rose-700'
+    }`}
+  >
+    {activePending < 0
+      ? formatINR(Math.abs(activePending))
+      : activePending === 0
+        ? 'Paid in full'
+        : formatINR(activePending)}
+  </p>
+</div>
               </div>
 
               <div className="mt-4 rounded-lg border border-slate-200">
@@ -544,6 +604,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       onChange={(event) => setForm({ ...form, cash: event.target.value })}
                       className="erp-input"
                       placeholder="0"
+                      disabled={activePending <= 0}
                     />
                   </div>
                   <div>
@@ -558,6 +619,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       onChange={(event) => setForm({ ...form, upi: event.target.value })}
                       className="erp-input"
                       placeholder="0"
+                      disabled={activePending <= 0}
                     />
                   </div>
                   <div>
@@ -636,7 +698,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={busyId === active.id}
+                  disabled={busyId === active.id || activePending <= 0}
                   onClick={() => submitDetailPayment(active)}
                   className="flex flex-1 items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300"
                 >
@@ -645,7 +707,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                 </button>
                 <button
                   type="button"
-                  disabled={busyId === active.id}
+                  disabled={busyId === active.id || activePending <= 0}
                   onClick={() => waiveFine(active)}
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:text-slate-400"
                 >
