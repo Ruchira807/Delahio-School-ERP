@@ -83,7 +83,7 @@ export default function App() {
 
   async function handleReset() {
     try {
-      const payload = await postReset();
+      const payload = await postReset(role);
       applyBootstrap(payload);
       showToast('Sandbox data restored from seed');
     } catch (resetError) {

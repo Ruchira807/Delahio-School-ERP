@@ -24,4 +24,5 @@ export const postWaiveFine = (payload) => api('/fees/waive-fine', { method: 'POS
 
 export const postBulkRemind = (payload) => api('/fees/bulk-remind', { method: 'POST', body: payload });
 
-export const postReset = () => api('/reset', { method: 'POST', body: {} });
+export const postReset = (role) =>
+  api('/reset', { method: 'POST', body: { role } });

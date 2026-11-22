@@ -26,7 +26,7 @@ const STATUS_OPTIONS = [
   { id: 'CREDIT', label: 'Credit balance' },
 ];
 
-const EMPTY_DRAFT = { pay: '', discount: '', waive: false };
+const EMPTY_DRAFT = { pay: '', discount: '' };
 
 function duesFor(student) {
   const tuitionAfterScholarship = student.tuition * (1 - student.scholarshipPct / 100);
@@ -44,8 +44,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
   const [drafts, setDrafts] = useState({});
   const [activeId, setActiveId] = useState(null);
   const [busyId, setBusyId] = useState(null);
-  const [form, setForm] = useState({ cash: '', upi: '', discount: '', waiveFine: false, note: '' });
-
+  const [form, setForm] = useState({ cash: '', upi: '', discount: '', note: '' });
   useEffect(() => {
     setRows(students);
   }, [students]);
@@ -96,7 +95,11 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
       { key: 'actions', label: 'Actions' },
     ];
 
-    return can(role, 'waiveFine') ? base : base.filter((column) => column.key !== 'waive');
+    return base.filter((column) => {
+  if (column.key === 'waive') return can(role, 'waiveFine');
+  if (column.key === 'discount') return can(role, 'applyDiscount');
+  return true;
+});
   }, [role]);
 
   function draftFor(id) {
@@ -117,31 +120,38 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
   }
 
   function toggleAll() {
-    if (selected.size === students.length) {
-      setSelected(new Set());
-      return;
+  const visibleIds = visibleRows.map((student) => student.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  setSelected((previous) => {
+    const next = new Set(previous);
+
+    if (allVisibleSelected) {
+      visibleIds.forEach((id) => next.delete(id));
+    } else {
+      visibleIds.forEach((id) => next.add(id));
     }
-    setSelected(new Set(students.map((student) => student.id)));
-  }
+
+    return next;
+  });
+}
 
   function openStudent(student) {
     setActiveId(student.id);
   }
 
-  function optimisticApply(studentId, cash, upi, waiveFine) {
-    const delta = Number(cash || 0) + Number(upi || 0);
-    setRows((previous) =>
-      previous.map((row) =>
-        row.id === studentId
-          ? {
-              ...row,
-              paidAmount: row.paidAmount + delta,
-              lateFine: waiveFine ? 0 : row.lateFine,
-            }
-          : row,
-      ),
-    );
-  }
+  function optimisticApply(studentId, cash, upi) {
+  const delta = Number(cash || 0) + Number(upi || 0);
+
+  setRows((previous) =>
+    previous.map((row) =>
+      row.id === studentId
+        ? { ...row, paidAmount: row.paidAmount + delta }
+        : row
+    )
+  );
+}
 
   async function collect(student, payload) {
   if (duesFor(student).pending <= 0) {
@@ -160,11 +170,7 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
         role,
       });
 
-      optimisticApply(student.id, payload.cash, payload.upi, payload.waiveFine);
-
-      if (payload.waiveFine && student.lateFine > 0) {
-        await postWaiveFine({ studentId: student.id, role });
-      }
+      optimisticApply(student.id, payload.cash, payload.upi);
 
       const entry = await recordAudit({
         action: 'FEE_PAYMENT',
@@ -173,32 +179,62 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
       });
       onAudit(entry);
       onToast(`${student.name}: receipt ${receipt.receipt.receiptNo} generated`);
-      setForm({ cash: '', upi: '', discount: '', waiveFine: false, note: '' });
+      setForm({ cash: '', upi: '', discount: '', note: '' });
     } catch (error) {
       onToast(error.message, 'error');
     } finally {
       setBusyId(null);
     }
+  }
+async function waiveFine(student) {
+  if (!can(role, 'waiveFine')) {
+    onToast('Your role cannot waive fines.', 'error');
+    return;
   }
 
-  async function waiveFine(student) {
-    setBusyId(student.id);
-    try {
-      const result = await postWaiveFine({ studentId: student.id, role });
-      setRows((previous) => previous.map((row) => (row.id === student.id ? { ...row, lateFine: 0 } : row)));
-      const entry = await recordAudit({
-        action: 'FEE_WAIVE',
-        detail: `Fine waiver of ${formatINR(result.waived)} processed for ${student.name}`,
-        role,
-      });
-      onAudit(entry);
-      onToast(result.waived > 0 ? `Fine waived: ${formatINR(result.waived)}` : 'No fine pending on this student');
-    } catch (error) {
-      onToast(error.message, 'error');
-    } finally {
-      setBusyId(null);
-    }
+  if (student.lateFine <= 0) {
+    onToast('No fine is pending for this student.', 'info');
+    return;
   }
+
+  const reason = window.prompt(
+    `Enter the reason for waiving the fine for ${student.name}:`
+  );
+
+  if (reason === null) return;
+
+  if (reason.trim().length < 5) {
+    onToast('Please enter a reason of at least 5 characters.', 'error');
+    return;
+  }
+
+  setBusyId(student.id);
+
+  try {
+    const result = await postWaiveFine({
+      studentId: student.id,
+      role,
+      reason: reason.trim(),
+    });
+
+    setRows((previous) =>
+      previous.map((row) =>
+        row.id === student.id ? { ...row, lateFine: 0 } : row
+      )
+    );
+
+    if (result.entry) onAudit(result.entry);
+
+    onToast(
+      `Fine waived: ${formatINR(result.waived)} for ${student.name}`
+    );
+  } catch (error) {
+    onToast(error.message, 'error');
+  } finally {
+    setBusyId(null);
+  }
+}
+
 
   async function remind(student) {
     try {
@@ -225,25 +261,28 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
   }
 
   function submitRowPayment(student) {
-    const draft = draftFor(student.id);
-    return collect(student, {
-      cash: Number(draft.pay || 0),
-      upi: 0,
-      discount: Number(draft.discount || 0),
-      waiveFine: Boolean(draft.waive),
-      note: 'Counter collection',
-    });
-  }
+  const draft = draftFor(student.id);
+
+  return collect(student, {
+    cash: Number(draft.pay || 0),
+    upi: 0,
+    discount: can(role, 'applyDiscount')
+      ? Number(draft.discount || 0)
+      : 0,
+    note: 'Counter collection',
+  });
+}
 
   function submitDetailPayment(student) {
-    return collect(student, {
-      cash: form.cash,
-      upi: form.upi,
-      discount: form.discount,
-      waiveFine: form.waiveFine,
-      note: form.note,
-    });
-  }
+  return collect(student, {
+    cash: form.cash,
+    upi: form.upi,
+    discount: can(role, 'applyDiscount')
+      ? form.discount
+      : 0,
+    note: form.note,
+  });
+}
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -307,15 +346,17 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
               <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Selected</p>
               <p className="text-lg font-semibold text-slate-800">{selected.size}</p>
             </div>
-            <button
-              type="button"
-              onClick={remindSelected}
-              disabled={selected.size === 0}
-              className="flex items-center gap-1.5 rounded-md bg-brand-600 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              <Send className="h-3.5 w-3.5" />
-              Remind
-            </button>
+            {can(role, 'bulkRemind') && (
+  <button
+    type="button"
+    onClick={remindSelected}
+    disabled={selected.size === 0}
+    className="flex items-center gap-1.5 rounded-md bg-brand-600 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+  >
+    <Send className="h-3.5 w-3.5" />
+    Remind
+  </button>
+)}
           </div>
         </div>
       </div>
@@ -335,7 +376,10 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                     <input
                       type="checkbox"
                       aria-label="Select all students"
-                      checked={selected.size > 0 && selected.size === students.length}
+                      checked={
+                        visibleRows.length > 0 &&
+                        visibleRows.every((student) => selected.has(student.id))
+                      }
                       onChange={toggleAll}
                       className="h-3.5 w-3.5 rounded border-slate-300"
                     />
@@ -421,27 +465,32 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       className="erp-input w-24 py-1 text-xs"
                     />
                   </td>
-                  <td className="px-2 py-2">
-                    <input
-                      type="number"
-                      min="0"
-                      value={draft.discount}
-                      onChange={(event) => updateDraft(student.id, { discount: event.target.value })}
-                      placeholder="0"
-                      className="erp-input w-20 py-1 text-xs"
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={draft.waive}
-                        onChange={(event) => updateDraft(student.id, { waive: event.target.checked })}
-                        className="h-3.5 w-3.5 rounded border-slate-300"
-                      />
-                      Fine
-                    </label>
-                  </td>
+                  {can(role, 'applyDiscount') && (
+  <td className="px-2 py-2">
+    <input
+      type="number"
+      min="0"
+      value={draft.discount}
+      onChange={(event) =>
+        updateDraft(student.id, { discount: event.target.value })
+      }
+      placeholder="0"
+      className="erp-input w-20 py-1 text-xs"
+    />
+  </td>
+)}
+                  {can(role, 'waiveFine') && (
+  <td className="px-2 py-2">
+    <button
+      type="button"
+      disabled={busyId === student.id || student.lateFine <= 0}
+      onClick={() => waiveFine(student)}
+      className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      Waive fine
+    </button>
+  </td>
+)}
                   <td className="px-2 py-2">
                     <div className="flex items-center gap-1">
                       <button
@@ -461,14 +510,16 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       >
                         <Printer className="h-3.5 w-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        title="Send reminder"
-                        onClick={() => remind(student)}
-                        className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
-                      >
-                        <Bell className="h-3.5 w-3.5" />
-                      </button>
+                      {can(role, 'bulkRemind') && (
+                        <button
+                          type="button"
+                          title="Send reminder"
+                          onClick={() => remind(student)}
+                          className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-100"
+                        >
+                          <Bell className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         title="Open student ledger"
@@ -622,31 +673,22 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                       disabled={activePending <= 0}
                     />
                   </div>
-                  <div>
-                    <label className="erp-label" htmlFor="discount">
-                      Discount
-                    </label>
-                    <input
-                      id="discount"
-                      type="number"
-                      min="0"
-                      value={form.discount}
-                      onChange={(event) => setForm({ ...form, discount: event.target.value })}
-                      className="erp-input"
-                      placeholder="0"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <label className="flex items-center gap-2 pb-1.5 text-[11px] text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={form.waiveFine}
-                        onChange={(event) => setForm({ ...form, waiveFine: event.target.checked })}
-                        className="h-3.5 w-3.5 rounded border-slate-300"
-                      />
-                      Waive late fine
-                    </label>
-                  </div>
+                  {can(role, 'applyDiscount') && (
+  <div>
+    <label className="erp-label" htmlFor="discount">
+      Discount
+    </label>
+    <input
+      id="discount"
+      type="number"
+      min="0"
+      value={form.discount}
+      onChange={(event) => setForm({ ...form, discount: event.target.value })}
+      className="erp-input"
+      placeholder="0"
+    />
+  </div>
+)}
                   <div className="col-span-2">
                     <label className="erp-label" htmlFor="note">
                       Note
@@ -705,14 +747,16 @@ export default function FeeDesk({ students, school, role, onAudit, onToast }) {
                   <Receipt className="h-4 w-4" />
                   Record payment
                 </button>
-                <button
-                  type="button"
-                  disabled={busyId === active.id || activePending <= 0}
-                  onClick={() => waiveFine(active)}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:text-slate-400"
-                >
-                  Waive fine
-                </button>
+                {can(role, 'waiveFine') && (
+  <button
+    type="button"
+    disabled={busyId === active.id || active.lateFine <= 0}
+    onClick={() => waiveFine(active)}
+    className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:text-slate-400"
+  >
+    Waive fine
+  </button>
+)}
               </div>
             </div>
           </aside>

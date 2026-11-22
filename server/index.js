@@ -51,6 +51,32 @@ function buildState() {
 
 let state = buildState();
 
+const ROLE_PERMISSIONS = {
+  ADMIN: {
+    applyDiscount: true,
+    waiveFine: true,
+    bulkRemind: true,
+    resetData: true,
+  },
+  ACCOUNTANT: {
+    applyDiscount: false,
+    waiveFine: true,
+    bulkRemind: true,
+    resetData: false,
+  },
+  RECEPTIONIST: {
+    applyDiscount: false,
+    waiveFine: false,
+    bulkRemind: false,
+    resetData: false,
+  },
+};
+
+function hasPermission(role, permission) {
+  return Boolean(ROLE_PERMISSIONS[role]?.[permission]);
+}
+
+
 function appendAudit(action, detail, role = 'SYSTEM') {
   const entry = {
     id: `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -97,6 +123,14 @@ api.get('/bootstrap', (req, res) => {
 
 api.post('/fees/pay', (req, res) => {
   const body = req.body ?? {};
+  const role = body.role ?? 'RECEPTIONIST';
+
+  if (Number(body.discount || 0) > 0 && !hasPermission(role, 'applyDiscount')) {
+  return res.status(403).json({
+    success: false,
+    error: 'Your role cannot apply discounts',
+  });
+  }
   const student = state.students.find(
     (item) => item.id === body.studentId
   );
@@ -179,7 +213,7 @@ api.post('/fees/pay', (req, res) => {
     discount,
     total,
     mode,
-    collectedBy: body.role ?? 'ADMIN',
+    collectedBy: role,
     note: typeof body.note === 'string'
       ? body.note.slice(0, 140)
       : '',
@@ -205,15 +239,71 @@ api.post('/fees/pay', (req, res) => {
   appendAudit(
     'FEE_PAYMENT',
     `${receiptNo} ${mode} INR ${total.toLocaleString('en-IN')} for ${student.name} (${student.id})`,
-    body.role ?? 'ADMIN',
+    role,
   );
 
   res.json({ success: true, receipt: entry });
 });
 
+
+api.post('/fees/waive-fine', (req, res) => {
+  const body = req.body ?? {};
+  const role = body.role ?? 'RECEPTIONIST';
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+
+  if (!hasPermission(role, 'waiveFine')) {
+    return res.status(403).json({
+      success: false,
+      error: 'Your role cannot waive fines',
+    });
+  }
+
+  if (reason.length < 5) {
+    return res.status(400).json({
+      success: false,
+      error: 'Please provide a written reason of at least 5 characters',
+    });
+  }
+
+  const student = state.students.find(
+    (item) => item.id === body.studentId
+  );
+
+  if (!student) {
+    return res.status(404).json({
+      success: false,
+      error: 'Student record not found',
+    });
+  }
+
+  const waived = Number(student.lateFine || 0);
+  student.lateFine = 0;
+
+  const entry = appendAudit(
+    'FEE_WAIVE',
+    `Fine waiver of INR ${waived.toFixed(2)} for ${student.name} (${student.id}). Reason: ${reason}`,
+    role,
+  );
+
+  res.json({
+    success: true,
+    waived,
+    reason,
+    entry,
+  });
+});
+
+
 api.post('/fees/bulk-remind', (req, res) => {
+  const role = req.body?.role ?? 'RECEPTIONIST';
+
+if (!hasPermission(role, 'bulkRemind')) {
+  return res.status(403).json({
+    success: false,
+    error: 'Your role cannot send bulk reminders',
+  });
+}
   const ids = Array.isArray(req.body?.studentIds) ? req.body.studentIds : [];
-  const role = req.body?.role ?? 'ADMIN';
   const stamp = new Date().toISOString();
 
   let sent = 0;
@@ -233,14 +323,23 @@ api.post('/audit', (req, res) => {
   const entry = appendAudit(
     typeof body.action === 'string' ? body.action : 'NOTE',
     typeof body.detail === 'string' ? body.detail.slice(0, 200) : '',
-    body.role ?? 'ADMIN',
+    role,
   );
   res.json({ success: true, entry });
 });
 
 api.post('/reset', (req, res) => {
+  const role = req.body?.role ?? 'RECEPTIONIST';
+
+  if (!hasPermission(role, 'resetData')) {
+    return res.status(403).json({
+      success: false,
+      error: 'Your role cannot reset data',
+    });
+  }
+
   state = buildState();
-  appendAudit('DATA_RESET', 'Sandbox data restored from seed', 'ADMIN');
+  appendAudit('DATA_RESET', 'Sandbox data restored from seed', role);
   res.json({ success: true, ...snapshot() });
 });
 
